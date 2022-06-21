@@ -6,11 +6,13 @@ namespace DefaultNamespace
 {
     public class MeshGenerator : MonoBehaviour
     {
-        public SquareGrid squareGrid;
+        public float wallHeight = 5;
         public MeshFilter walls;
+        
         [HideInInspector] public List<Vector3> vertices;
         [HideInInspector] public List<int> triangles;
 
+        private SquareGrid squareGrid;
         private readonly Dictionary<int, List<Triangle>> triangleDictionary = new ();
         private readonly List<List<int>> outlines = new ();
         private readonly HashSet<int> checkedVertices = new ();
@@ -51,7 +53,6 @@ namespace DefaultNamespace
             List<int> wallTriangles = new();
 
             Mesh wallMesh = new();
-            const float wallHeight = 5;
 
             foreach (List<int> outline in outlines)
             {
@@ -61,7 +62,7 @@ namespace DefaultNamespace
                     wallVertices.Add(vertices[outline[i]]); //left vertex
                     wallVertices.Add(vertices[outline[i + 1]]); //right vertex
                     wallVertices.Add(vertices[outline[i]] - Vector3.up * wallHeight); //bottom left vertex
-                    wallVertices.Add(vertices[outline[i + 1]]- Vector3.up * wallHeight); //bottom left vertex
+                    wallVertices.Add(vertices[outline[i + 1]] - Vector3.up * wallHeight); //bottom left vertex
                     
                     wallTriangles.Add(startIndex + 0);
                     wallTriangles.Add(startIndex + 2);
@@ -184,30 +185,110 @@ namespace DefaultNamespace
             AddTriangleToDictionary(triangle.vertexIndexC, triangle);
         }
 
+        
+        
+
+        private void AddTriangleToDictionary(int vertexIndexKey, Triangle triangle)
+        {
+            if (triangleDictionary.ContainsKey(vertexIndexKey))
+            {
+                triangleDictionary[vertexIndexKey].Add(triangle);
+            }
+            else
+            {
+                var triangleList = new List<Triangle> {triangle};
+                triangleDictionary.Add(vertexIndexKey, triangleList);
+            }
+        }
+
+        private void CalculateMeshOutlines()
+        {
+            //Loop through each of the vertices.
+            for (var vertexIndex = 0; vertexIndex < vertices.Count; vertexIndex++)
+            {
+                //If the hashset does not contain this vertex index.
+                if (!checkedVertices.Contains(vertexIndex))
+                {
+                    //
+                    int newOutlineVertex = GetConnectedOutlineVertex(vertexIndex);
+                    if (newOutlineVertex != -1) //If the new vertex is a wall
+                    {
+                        checkedVertices.Add(vertexIndex);
+
+                        var newOutline = new List<int> {vertexIndex};
+                        outlines.Add(newOutline);
+                        FollowOutline(newOutlineVertex, outlines.Count - 1);
+                        outlines[^1].Add(vertexIndex); //Count - 1
+                    }
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Get the triangles which contain this vertex. Then loop over each of their vertices and check if the vertex is part of an outline.
+        /// Returns the vertex index of one of the vertices if part of a wall edge, otherwise returns -1.
+        /// </summary>
+        /// <param name="vertexIndex"></param>
+        /// <returns></returns>
         private int GetConnectedOutlineVertex(int vertexIndex)
         {
             List<Triangle> trianglesContainingVertex = triangleDictionary[vertexIndex];
-            for (var i = 0; i < trianglesContainingVertex.Count; i++)
+            
+            //Loop through the triangles which contain this vertex.
+            foreach (Triangle triangle in trianglesContainingVertex)
             {
-                Triangle triangle = trianglesContainingVertex[i];
-
                 for (var j = 0; j < 3; j++)
                 {
-                    int vertexB = triangle[j];
+                    int vertexB = triangle[j]; // This uses an indexer to loop through the elements of the struct like a collection.
 
+                    // If the vertex of this triangle has not been looped over before or is not the current vertex...
                     if (vertexB != vertexIndex && !checkedVertices.Contains(vertexB))
                     {
+                        //Check weather the vertex is part of an outline edge.
                         if (IsOutlineEdge(vertexIndex, vertexB))
                         {
+                            //If yes return the vertex index.
                             return vertexB;
                         }
                     }
                 }
             }
 
+            //Otherwise return - 1 to let know that this is not a vertex of a wall that should be constructed.
             return -1;
         }
 
+        /// <summary>
+        /// Recursively calls GetConnectedOutlineVertex, until there is no vertex that corresponds to an edge.
+        /// </summary>
+        /// <param name="vertexIndex"></param>
+        /// <param name="outlineIndex"></param>
+        private void FollowOutline(int vertexIndex, int outlineIndex)
+        {
+            while (true)
+            {
+                outlines[outlineIndex].Add(vertexIndex);
+                checkedVertices.Add(vertexIndex);
+                int nextVertexIndex = GetConnectedOutlineVertex(vertexIndex);
+
+                //Recursively scan the next triangle for outlines.
+                if (nextVertexIndex != -1)
+                {
+                    vertexIndex = nextVertexIndex;
+                    continue;
+                }
+
+                break;
+            }
+        }
+
+        /// <summary>
+        /// This is the actual implementation of checking weather an edge is an outline or not.
+        /// If the the two vertices which get passed into this function don't share exactly one triangle, this function returns false.
+        /// </summary>
+        /// <param name="vertexA"></param>
+        /// <param name="vertexB"></param>
+        /// <returns></returns>
         private bool IsOutlineEdge(int vertexA, int vertexB)
         {
             List<Triangle> trianglesContainingVertexA = triangleDictionary[vertexA];
@@ -228,51 +309,6 @@ namespace DefaultNamespace
             return sharedTriangleCount == 1;
         }
 
-        private void AddTriangleToDictionary(int vertexIndexKey, Triangle triangle)
-        {
-            if (triangleDictionary.ContainsKey(vertexIndexKey))
-            {
-                triangleDictionary[vertexIndexKey].Add(triangle);
-            }
-            else
-            {
-                var triangleList = new List<Triangle> {triangle};
-                triangleDictionary.Add(vertexIndexKey, triangleList);
-            }
-        }
-
-        private void CalculateMeshOutlines()
-        {
-            for (var vertexIndex = 0; vertexIndex < vertices.Count; vertexIndex++)
-            {
-                if (!checkedVertices.Contains(vertexIndex))
-                {
-                    int newOutlineVertex = GetConnectedOutlineVertex(vertexIndex);
-                    if (newOutlineVertex != -1)
-                    {
-                        checkedVertices.Add(vertexIndex);
-
-                        var newOutline = new List<int> {vertexIndex};
-                        outlines.Add(newOutline);
-                        FollowOutline(newOutlineVertex, outlines.Count - 1);
-                        outlines[^1].Add(vertexIndex); //Count - 1
-                    }
-                }
-            }
-        }
-
-        private void FollowOutline(int vertexIndex, int outlineIndex)
-        {
-            outlines[outlineIndex].Add(vertexIndex);
-            checkedVertices.Add(vertexIndex);
-            int nextVertexIndex = GetConnectedOutlineVertex(vertexIndex);
-
-            if (nextVertexIndex != -1)
-            {
-                FollowOutline(nextVertexIndex, outlineIndex);
-            } 
-        }
-
         private readonly struct Triangle
         {
             public readonly int vertexIndexA;
@@ -290,6 +326,7 @@ namespace DefaultNamespace
                 vertices = new[] {a, b, c};
             }
 
+            //Indexer...
             public int this[int i] => vertices[i];
 
             public bool Contains(int vertexIndex)
@@ -299,7 +336,7 @@ namespace DefaultNamespace
         }
 
 
-        public class SquareGrid
+        private class SquareGrid
         {
             public readonly Square[,] squares;
 
@@ -337,8 +374,8 @@ namespace DefaultNamespace
                 }
             }
         }
-        
-        public class Square
+
+        private class Square
         {
             public readonly ControlNode topLeft;
             public readonly ControlNode topRight;
@@ -366,7 +403,7 @@ namespace DefaultNamespace
                 centreBottom = bottomLeft.right;
                 centreLeft = bottomLeft.above;
 
-                //For marching cubes replace this with left-wise bit shift.
+                //For marching cubes replace this with left-wise bit shift and triangulation table.
                 if (topLeft.active) //1000
                     configuration += 8;
                 if (topRight.active) //0100
@@ -379,9 +416,9 @@ namespace DefaultNamespace
         }
         
         //Node along the edge
-        public class Node
+        private class Node
         {
-            public Vector3 pos;
+            public readonly Vector3 pos;
             public int vertexIndex = -1;
 
             protected internal Node(Vector3 _pos)
@@ -391,7 +428,7 @@ namespace DefaultNamespace
         }
         
         //Node along the corners.
-        public class ControlNode : Node
+        private class ControlNode : Node
         {
             public readonly bool active;
             public readonly Node above;

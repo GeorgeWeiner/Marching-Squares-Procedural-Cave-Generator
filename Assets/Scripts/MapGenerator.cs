@@ -1,9 +1,12 @@
 using System;
+using System.Collections.Generic;
 using DefaultNamespace;
 using UnityEngine;
 
 public class MapGenerator : MonoBehaviour
 {
+    public int roomThresholdSize = 100;
+    public int wallThresholdSize = 50;
     public string seed;
     public bool useRandomSeed;
     [Range(1, 10)]
@@ -16,6 +19,7 @@ public class MapGenerator : MonoBehaviour
     public int randomFillPercent;
     
     private int[,] _map;
+    public int borderSize;
 
     private void OnValidate()
     {
@@ -37,12 +41,13 @@ public class MapGenerator : MonoBehaviour
             SmoothMap();
         }
 
-        int borderSize = 20;
-        int[,] borderedMap = new int[width + borderSize * 2, height + borderSize * 2];
-
-        for (int x = 0; x < borderedMap.GetLength(0); x++)
+        ProcessMap();
+        
+        var borderedMap = new int[width + borderSize * 2, height + borderSize * 2];
+        
+        for (var x = 0; x < borderedMap.GetLength(0); x++)
         {
-            for (int y = 0; y < borderedMap.GetLength(1); y++)
+            for (var y = 0; y < borderedMap.GetLength(1); y++)
             {
                 if (x >= borderSize && x < width + borderSize && y >= borderSize && y < height + borderSize)
                 {
@@ -57,6 +62,113 @@ public class MapGenerator : MonoBehaviour
 
         MeshGenerator meshGen = GetComponent<MeshGenerator>();
         meshGen.GenerateMesh(borderedMap, 1);
+    }
+    
+    /// <summary>
+    /// Detect Regions in the map, and change regions that have a size below a certain threshold to the opposite type.
+    /// This results in a map, which doesn't contain regions that are too small.
+    /// </summary>
+    private void ProcessMap()
+    {
+        List<List<Coord>> wallRegions = GetRegions(1);
+        //Debug.LogFormat("{0} Wall Regions", wallRegions.Count);
+
+        foreach (var wallRegion in wallRegions)
+        {
+            if (wallRegion.Count < wallThresholdSize)
+            {
+                foreach (var tile in wallRegion)
+                {
+                    _map[tile.tileX, tile.tileY] = 0;
+                }
+            }
+        }
+        
+        List<List<Coord>> roomRegions = GetRegions(0);
+        //Debug.LogFormat("{0} Room Regions", wallRegions.Count);
+        foreach (var roomRegion in roomRegions)
+        {
+            if (roomRegion.Count < roomThresholdSize)
+            {
+                foreach (var tile in roomRegion)
+                {
+                    _map[tile.tileX, tile.tileY] = 1;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Loop over the entire map and detect the regions that are contained.
+    /// If a region has already been iterated over, it won't get iterated over again.
+    /// </summary>
+    /// <param name="tileType"></param>
+    /// <returns></returns>
+    private List<List<Coord>> GetRegions(int tileType)
+    {
+        List<List<Coord>> regions = new();
+        var mapFlags = new int[width, height];
+
+        for (var x = 0; x < width; x++)
+        {
+            for (var y = 0; y < height; y++)
+            {
+                if (mapFlags[x, y] == 0 && _map[x, y] == tileType)
+                {
+                    List<Coord> newRegion = GetRegionTiles(x, y);
+                    regions.Add(newRegion);
+                    
+
+                    foreach (var tile in newRegion)
+                    {
+                        mapFlags[tile.tileX, tile.tileY] = 1;
+                    }
+                }
+            }
+        }
+
+        return regions;
+    }
+
+
+    /// <summary>
+    /// This method returns an area connected to a given tile, via a flood-fill algorithm.
+    /// </summary>
+    /// <param name="startX"></param>
+    /// <param name="startY"></param>
+    /// <returns></returns>
+    private List<Coord> GetRegionTiles(int startX, int startY)
+    {
+        List<Coord> tiles = new();
+        var mapFlags = new int[width, height];
+        int tileType = _map[startX, startY];
+
+        Queue<Coord> queue = new();
+        queue.Enqueue(new Coord(startX, startY));
+        mapFlags[startX, startY] = 1;
+
+        while (queue.Count > 0)
+        {
+            Coord tile = queue.Dequeue();
+            tiles.Add(tile);
+
+            for (int x = tile.tileX - 1; x <= tile.tileX + 1; x++)
+            {
+                for (int y = tile.tileY - 1; y <= tile.tileY + 1; y++)
+                {
+                    if (IsInMapRange(x, y) && (y == tile.tileY || x == tile.tileX))
+                    {
+                        if (mapFlags[x, y] == 0 && _map[x, y] == tileType)
+                        {
+                            mapFlags[x, y] = 1;
+                            queue.Enqueue(new Coord(x,y));
+                        }
+                    }
+                }
+            }
+        }
+
+        return tiles;
     }
 
     private void RandomFillMap()
@@ -103,7 +215,7 @@ public class MapGenerator : MonoBehaviour
         for (int neighbourY = gridY - 1; neighbourY <= gridY + 1; neighbourY++)
         {
             //If neighbours are not above the edge of the map...
-            if (neighbourX >= 0 && neighbourX < width && neighbourY >= 0 && neighbourY < height)
+            if (IsInMapRange(neighbourX, neighbourY))
             {
                 //...Or neighbour isn't the original tile...
                 if (neighbourX != gridX || neighbourY != gridY)
@@ -123,17 +235,21 @@ public class MapGenerator : MonoBehaviour
         return wallCount;
     }
 
-    //private void OnDrawGizmos()
-    //{
-    //    if (_map != null)
-    //    {
-    //        for (var x = 0; x < width; x++)
-    //        for (var y = 0; y < height; y++)
-    //        {
-    //            Gizmos.color = _map[x, y] == 1 ? Color.black : Color.white;
-    //            Vector3 pos = new Vector3(-width / 2 + x + .5f, 0, -height / 2 + y + .5f);
-    //            Gizmos.DrawCube(pos, Vector3.one);
-    //        }
-    //    }
-    //}
+    private bool IsInMapRange(int x, int y)
+    {
+        return x >= 0 && x < width && y >= 0 && y < height;
+    }
+
+    private struct Coord
+    {
+        public int tileX;
+        public int tileY;
+
+        public Coord(int x, int y)
+        {
+            this.tileX = x;
+            this.tileY = y;
+        }
+    }
+    
 }
